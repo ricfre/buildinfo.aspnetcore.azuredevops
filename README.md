@@ -1,0 +1,1 @@
+# buildinfo.aspnetcore.azuredevops
