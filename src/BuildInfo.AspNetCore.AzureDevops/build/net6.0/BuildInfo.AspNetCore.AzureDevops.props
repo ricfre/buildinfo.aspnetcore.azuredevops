@@ -1,0 +1,114 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+    
+    <!--Read about inline msbuild tasks here: https://learn.microsoft.com/en-us/visualstudio/msbuild/msbuild-roslyncodetaskfactory?view=vs-2022-->
+    <UsingTask TaskName="BuildInformationTask" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+        <ParameterGroup>
+            <OutputDir ParameterType="System.String" Required="True" Output="False" />
+        </ParameterGroup>
+        <Task>
+            <Using Namespace="System.Collections.Specialized" />
+            <Using Namespace="System.Globalization" />
+            <Code Type="Fragment" Language="cs">
+                <![CDATA[
+                const string JsonDataFileName = "buildInfo.json";
+                
+                Log.LogMessage(MessageImportance.High, $"Creating build information data in '{OutputDir}'");
+                
+                CreateOutputDirIfNotExisting();
+                CreateOrOverwriteReadMeFile();
+                WriteGitIgnore();
+                WriteJsonData();
+                
+                void CreateOutputDirIfNotExisting()
+                {
+                    if (!Directory.Exists(OutputDir))
+                    {
+                        Log.LogMessage(MessageImportance.High, $"Creating directory '{OutputDir}'");
+                        Directory.CreateDirectory(OutputDir);
+                    }
+                }
+
+                void CreateOrOverwriteReadMeFile()
+                {
+                    var readmePath = Path.Combine(OutputDir, "README.md");
+
+                    var info = $"This directory contains build related information created during build." +
+                               $"\r\nNotice that {JsonDataFileName} should never be checked in." +
+                               "\r\n\r\nThe entire directory can be removed if the above mentioned NuGet package is no longer referenced.";
+
+                    Log.LogMessage(MessageImportance.High, $"Creating readme '{readmePath}'");
+                    File.WriteAllText(readmePath, info);
+                }
+                
+                void WriteGitIgnore()
+                {
+                    var gitIgnoreFilePath = Path.Combine(OutputDir, ".gitignore");
+                    Log.LogMessage(MessageImportance.High, $"Creating '{gitIgnoreFilePath}'");
+                    File.WriteAllText(gitIgnoreFilePath, JsonDataFileName);
+                }
+
+                void WriteJsonData()
+                {
+                    var jsonData = GetJsonData();
+                    var buildInfoDataFilePath = Path.Combine(OutputDir, JsonDataFileName);
+                    Log.LogMessage(MessageImportance.High, $"Creating '{buildInfoDataFilePath}'");
+                    File.WriteAllText(buildInfoDataFilePath, jsonData, Encoding.UTF8);
+                }
+                
+                string GetJsonData()
+                {
+                    var values = new OrderedDictionary();
+                    
+                    values.Add("BranchName", GetEnvironmentVariableOrDefault("BUILD_SOURCEBRANCHNAME", "FakeBranch"));
+                    values.Add("Sha", GetEnvironmentVariableOrDefault("BUILD_SOURCEVERSION", "FakeShaf704d1d0ff2a07f2252ae16bb54730914"));
+                    values.Add("BuildTimestamp", GetEnvironmentVariableOrDefault("SYSTEM_PIPELINESTARTTIME", DateTimeOffset.Now.ToString()));
+                    values.Add("BuildId", GetEnvironmentVariableOrDefault("BUILD_BUILDID", "FakeBuildId"));
+                    values.Add("BuildNumber", GetEnvironmentVariableOrDefault("BUILD_BUILDNUMBER", "FakeBuildNumber"));
+                    values.Add("BuildUrl", CreateBuildUrl());
+                    values.Add("BuildAgentName", GetEnvironmentVariableOrDefault("AGENT_NAME", "Localhost"));
+                    
+                    // We cannot use System.Text.Json here (https://github.com/dotnet/msbuild/issues/5737) :-(
+                    // Lets create the json manually instead...
+                    
+                    Log.LogMessage(MessageImportance.High, "Collected build info values:");
+
+                    var sb = new StringBuilder();
+                    sb.AppendLine("{");
+                    var cnt = 0;
+                    foreach (DictionaryEntry kvp in values)
+                    {
+                        cnt++;
+                        var trailing = cnt == values.Count ? "" : ",";
+                        sb.AppendLine($"    \"{kvp.Key}\": \"{kvp.Value}\"{trailing}");
+                        Log.LogMessage(MessageImportance.High, $"    {kvp.Key}: {kvp.Value}");
+                    }
+                    sb.AppendLine("}");
+                    
+                    return sb.ToString();
+                    //return JsonSerializer.Serialize(values, new JsonSerializerOptions { WriteIndented = true });
+                }
+                
+                string GetEnvironmentVariableOrDefault(string environmentVariableName, string defaultValue)
+                {
+                    var value = Environment.GetEnvironmentVariable(environmentVariableName);
+                    return value ?? defaultValue;
+                }
+                
+                string CreateBuildUrl()
+                {
+                    var defaultValue = "fake";
+                    var server = GetEnvironmentVariableOrDefault("SYSTEM_TEAMFOUNDATIONCOLLECTIONURI", defaultValue);
+                    var project = GetEnvironmentVariableOrDefault("SYSTEM_TEAMPROJECT", defaultValue);
+                    var buildId = GetEnvironmentVariableOrDefault("BUILD_BUILDID", defaultValue);
+                    
+                    if (server == defaultValue || project == defaultValue || buildId == defaultValue)
+                        return "N/A";
+                    
+                    return $"{server}{project}/_build/results?buildId={buildId}";
+                }
+]]>
+            </Code>
+        </Task>
+    </UsingTask>
+</Project>
